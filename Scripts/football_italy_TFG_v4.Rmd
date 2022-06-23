@@ -1,0 +1,778 @@
+---
+title: "Joc de dades 1 - TFG PPDAC"
+author: "Sara Montañés González"
+date: "19/03/2022"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages + data
+```{r message = FALSE, warning = FALSE}
+library(devtools)
+# install_github("LeoEgidi/footBayes")
+```
+
+```{r message = FALSE, warning = FALSE}
+library(footBayes)
+# install.packages("engsoccerdata")
+library(engsoccerdata)
+library(bayesplot)
+library(loo)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(AER)
+```
+
+## Dades
+```{r}
+data(italy)
+italy <- as.data.frame(italy)
+```
+
+>
+
+## Filter - Season 2015
+
+Em quedo només amb les dades de la temporada 2015-2016.
+```{r}
+italy_2015 <- subset(italy, Season == "2015")
+head(italy_2015)
+```
+
+>
+
+## New variable `journey`
+
+Construeixo la variable `journey`, que prendrà valors del 1 al 38, cada un d'ells repetit 10 cops ja que cada jornada hi ha 20 equips i per tant 10 partits.
+```{r}
+nrow(italy_2015)
+italy_2015$journey <- rep(1:38, each = 10)
+head(italy_2015, 11)
+```
+
+>
+
+## New variables `hpos2014`, `hgoal2014`, `vpos2014` and `vgoal2014`
+
+- `hpos2014`: posició de l'equip home a la temporada anterior (2014)
+
+- `hgoal2014`: nombre de gols de l'equip home a la temporada anterior (2014)
+
+- `vpos2014`:  posició de l'equip visitor a la temporada anterior (2014)
+
+- `vgoal2014`: nombre de gols de l'equip visitor a la temporada anterior (2014)
+
+
+### Data season 2014
+
+https://resultados.as.com/resultados/futbol/italia/2014_2015/clasificacion/
+```{r}
+last_season <- data.frame(team = c("Juventus", "AS Roma", "Lazio Roma", "ACF Fiorentina", "SSC Napoli", "Genoa CFC", "Sampdoria", "Inter", "Torino FC", "AC Milan", "US Palermo", "Sassuolo Calcio", "Hellas Verona", "Chievo Verona", "Empoli FC", "Udinese Calcio", "Atalanta", "Cagliari", "Cesena", "Parma"), last_position = 1:20, last_goals = c(72, 54, 71, 61, 70, 62, 48, 59, 48, 56, 53, 49, 49, 28, 46, 43, 38, 48, 36, 33))
+last_season
+```
+
+Important!! A la temporada 14/15 i a la 15/16 no hi ha els mateixos equips!!
+
+```{r}
+# Equips temporada 15/16
+teams_2015 <- vector(length = 20)
+teams_2015[1:10] <- subset(italy_2015, journey == 1)$home
+teams_2015[11:20] <- subset(italy_2015, journey == 1)$visitor
+teams_2015 <- sort(teams_2015)
+
+# Equips temporada 14/15
+teams_2014 <- last_season$team
+teams_2014 <- sort(teams_2014)
+
+# Equips a les dues temporades
+(teams_1415 <- data.frame(t2014 = teams_2014, t2015 = teams_2015))
+```
+
+A la temporada 2014 els equips que van baixar de categoria són el Cagliari, Cesena i Parma. A canvi, van pujar de categoria els equips Bologna FC, Carpi FC, Frosinone Calcio. 
+
+>
+
+### Creation new variables: `hpos2014` and `hgoal2014`
+
+Recordatori:
+
+- `hpos2014`: posició de l'equip home a la temporada anterior (2014)
+
+- `hgoal2014`: nombre de gols de l'equip home a la temporada anterior (2014)
+
+```{r}
+names(last_season)[names(last_season) == "team"] <- "home"
+italy_2015 <- merge(x = italy_2015, y = last_season, by = "home", all.x = TRUE)
+names(italy_2015)[names(italy_2015) == "last_position"] <- "hpos2014"
+names(italy_2015)[names(italy_2015) == "last_goals"] <- "hgoal2014"
+```
+
+
+### Creation new variables: `vpos2014` and `vgoal2014`
+
+Recordatori:
+
+- `vpos2014`:  posició de l'equip visitor a la temporada anterior (2014)
+
+- `vgoal2014`: nombre de gols de l'equip visitor a la temporada anterior (2014)
+
+```{r}
+names(last_season)[names(last_season) == "home"] <- "visitor"
+italy_2015 <- merge(x = italy_2015, y = last_season, by = "visitor", all.x = TRUE)
+names(italy_2015)[names(italy_2015) == "last_position"] <- "vpos2014"
+names(italy_2015)[names(italy_2015) == "last_goals"] <- "vgoal2014"
+```
+
+```{r}
+italy_2015 <- italy_2015[order(italy_2015$journey), ]
+italy_2015 <- italy_2015[, c(3, 9, 4, 2, 1, 5:8, 10:13)]
+head(italy_2015, 15)
+```
+
+Els equips Bologna FC, Carpi FC i Frosinone Calcio no tenen valors per a les variables `hpos2014`, `hgoal2014`, `vpos2014` i `vgoal2014` perquè durant la temporada 2014 estaven a una categoria inferior!! 
+
+>
+
+## New variables: `hpoints`,  `vpoints` and `win`
+
+Es calculen els punts obtinguts en aquella jornada per l'equip home i el visitor. També es calcula la variable `win`, que pren els següents valors: 
+
+- 1 si l'equip home guanya
+
+- 0 si els equips empaten 
+
+- -1 si l'equip visitor guanya
+
+```{r}
+# -- hpoints5j -- #
+italy_2015$hpoints <- vector(length = length(italy_2015$home)) # length = nrow(italy_2015) = 380
+for (i in 1:length(italy_2015$home)){ 
+  if (italy_2015$hgoal[i] >  italy_2015$vgoal[i]){
+    italy_2015$hpoints[i] <- 3
+  }
+  else if (italy_2015$hgoal[i] == italy_2015$vgoal[i]){
+    italy_2015$hpoints[i] <- 1
+  }
+  else{
+    italy_2015$hpoints[i] <- 0
+  }
+}
+
+
+# -- vpoints5j -- #
+italy_2015$vpoints <- vector(length = length(italy_2015$visitor)) # length = nrow(italy_2015) = 380
+italy_2015$win <- vector(length = length(italy_2015$home))
+for (i in 1:length(italy_2015$visitor)){ 
+  if (italy_2015$vgoal[i] > italy_2015$hgoal[i]){
+    italy_2015$vpoints[i] <- 3
+        italy_2015$win[i] <- -1
+  }
+  else if (italy_2015$vgoal[i] == italy_2015$hgoal[i]){
+    italy_2015$vpoints[i] <- 1
+    italy_2015$win[i] <- 0
+  }
+  else{
+    italy_2015$vpoints[i] <- 0
+    italy_2015$win[i] <- 1
+  }
+}
+```
+
+>
+
+## New variables: `hgoal_prev5` i `vgoal_prev5`
+
+Es calcula la mitjana dels gols obtinguts en les últimes 5 jornades per l'equip home i visitor.
+
+```{r}
+# Sara: Afegeixo variable ID, que va de 1 a 380
+italy_2015 <- italy_2015 %>% 
+          rowid_to_column("ID")
+
+# 
+italy_2015_long <- italy_2015 %>% 
+  
+  # rowid_to_column("ID") %>% 
+ 
+   select(ID, journey, home, visitor, hgoal, vgoal, hpoints, vpoints) %>% 
+  
+  # gather(type, goals, -home, - visitor,-ID,-journey,-hpoints,-vpoints) %>% 
+  
+  pivot_longer(c(hgoal, vgoal), names_to = "type", values_to = "goals") %>% 
+    # pivot_longer() "lengthens" data, increasing the number of rows and decreasing the number of columns. Es crea la variable "type", que diu quin equip ha marcat els gols. El nombre de gols d'aquell equip va a la variable "goals".
+  
+  mutate(team = if_else(type=='hgoal', home, visitor)) %>%
+    # si la variable "type" és 'hgoal' a "team" hi posem l'equip que hi hagi a la variable "home". Sinó, hi posem l'equip que hi ha a la variable "visitor".
+  
+  arrange(journey, team) %>%
+    # Ordeno la base de dades per journey i per team
+ 
+   group_by(team) %>%
+    # Agrupo la base de dades per team
+  
+  mutate(goals_prev5 = rollapply(goals, list(-(1:5)), mean, fill = NA, align = "right", partial = TRUE))
+    # mitjana mòbil
+
+
+
+italy_2015 <- italy_2015_long %>%
+  ungroup()  %>%
+    # desagrupo, ho tenia agrupat per team
+  
+  #select(-one_of(c("team","goals"))) %>%
+  
+  select(ID, type, goals_prev5) %>%
+    # selecciono ID, type i la nova variable que calcula la mitjana de gols en les últimes 5 jornades
+  
+  spread(type, goals_prev5) %>%
+    # We have a data frame where some of the rows contain information that is really a variable name. This means the columns are a combination of variable names as well as some data. 
+  
+  rename(hgoal_prev5 = hgoal, vgoal_prev5 = vgoal) %>%
+
+  
+  left_join(italy_2015)
+```
+
+>
+
+## New variables:  `hpoints_prev5` i `vpoints_prev5`
+
+Es calcula la mitjana dels punts obtinguts en les últimes 5 jornades per l'equip home i el visitor.
+
+```{r}
+italy_2015_long_2 <- italy_2015 %>% 
+  
+  # rowid_to_column("ID") %>% 
+ 
+   select(ID, journey, home, visitor, hgoal, vgoal, hpoints, vpoints) %>% 
+  
+  # gather(type, goals, -home, - visitor,-ID,-journey,-hpoints,-vpoints) %>% 
+  
+  pivot_longer(c(hpoints, vpoints), names_to = "type", values_to = "points") %>% 
+    # pivot_longer() "lengthens" data, increasing the number of rows and decreasing the number of columns. Es crea la variable "type", que diu quin equip ha marcat els gols. El nombre de gols d'aquell equip va a la variable "goals".
+  
+  mutate(team = if_else(type=='hpoints', home, visitor)) %>%
+    # si la variable "type" és 'hgoal' a "team" hi posem l'equip que hi hagi a la variable "home". Sinó, hi posem l'equip que hi ha a la variable "visitor".
+  
+  arrange(journey, team) %>%
+    # Ordeno la base de dades per journey i per team
+ 
+   group_by(team) %>%
+    # Agrupo la base de dades per team
+  
+  mutate(points_prev5 = rollapply(points, list(-(1:5)), mean, fill = NA, align = "right", partial = TRUE))
+    # mitjana mòbil
+
+
+italy_2015 <- italy_2015_long_2 %>%
+  ungroup()  %>%
+    # desagrupo, ho tenia agrupat per team
+  
+  #select(-one_of(c("team","goals"))) %>%
+  
+  select(ID, type, points_prev5) %>%
+    # selecciono ID, type i la nova variable que calcula la mitjana de gols en les últimes 5 jornades
+  
+  spread(type, points_prev5) %>%
+    # We have a data frame where some of the rows contain information that is really a variable name. This means the columns are a combination of variable names as well as some data. 
+  
+  rename(hpoints_prev5 = hpoints, vpoints_prev5 = vpoints) %>%
+
+  left_join(italy_2015)
+```
+
+> 
+
+Els valors de la jornada 1 tenen NA. Imputo valor 0!
+```{r}
+italy_2015$hpoints_prev5[1:10] <- italy_2015$vpoints_prev5[1:10] <- italy_2015$hgoal_prev5[1:10] <- italy_2015$vgoal_prev5[1:10] <- 0
+```
+
+# Model per a `hgoal` (amb train i test)
+
+## Comprovació del tipus de model (Poisson, Binomial Negatiu, Quasi-Poisson...)
+
+**Començo amb Poisson**
+
+```{r}
+mpois_home <- glm(hgoal ~ home + visitor, data = italy_2015, family = poisson)
+summary(mpois_home)
+```
+
+Un cop obtingut el model Poisson, és necessari estimar el paràmetre de dispersió $\phi$ per veure si aquest model té sobredispersió. L'estimació de $\phi$ s'obtindrà fent ús de l'estadístic de Pearson.
+
+```{r, echo = FALSE}
+# Estimació phi segons estadístic de Pearson
+X2DER <- sum(resid(mpois_home, type = "pearson")^2)
+(phi <- X2DER/mpois_home$df.residual)
+```
+
+$\hat{\phi}$ = `r phi` $< 1$. Per tant, el model Poisson no presenta sobredispersió. 
+
+Per poder corroborar l'anterior afirmació amb evidències estadístiques s'utilitza la funció `dispersiontest`, la qual realitza 2 contrasts d'hipòtesis diferents. 
+
+El primer test, anomenat *trafo 1*, contrasta si existeix una relació lineal o no entre $E[Y|X]$ i $Var[Y|X]$. Així doncs, les hipòtesis d'aquest test són les següents:
+
+- $H_0: Var[Y|X] = E[Y|X]$
+
+- $H_1: Var[Y|X] = E[Y|X] + \alpha \; E[Y|X]$
+
+Per tant, si $\alpha$ és significativament diferent de 0, existiran evidències estadístiques que permetran corroborar que la relació entre $E[Y|X]$ i $Var[Y|X]$ és lineal i, que per tant, el model presenta sobredispersió. En aquest cas, el més convenient serà ajustar un model Quassi-Poisson. 
+
+A continuació es realitza el test *trafo 1* fent ús de les nostres dades. 
+
+```{r, echo = FALSE}
+dispersiontest(mpois_home, trafo = 1) 
+```
+
+El p-valor obtingut en el test és igual a 0.9997, de manera que no tenim prou evidència per rebutjar la hipòtesi nul·la, i, per tant, no hi ha sobredispersió.
+
+\medskip
+
+El segon test, anomenat *trafo 2*, contrasta si existeix una relació quadràtica o no entre $E[Y|X]$ i $Var[Y|X]$. Així doncs, les hipòtesis d'aquest test són les següents:
+
+- $H_0: Var[Y|X] = E[Y|X]$
+
+- $H_1: Var[Y|X] = E[Y|X] + \alpha \; E[X|X]^2$
+
+Per tant, si $\alpha$ és significativament diferent de 0, existiran evidències estadístiques que permetran corroborar que la relació entre $E[Y|X]$ i $Var[Y|X]$ és quadràtica i, que per tant, el model presenta sobredispersió. En aquest cas, el més convenient serà ajustar un model Binomial Negativa. 
+
+A continuació es realitza el test *trafo 2* fent ús de les nostres dades.
+
+```{r, echo = FALSE}
+dispersiontest(mpois_home, trafo = 2)   
+```
+
+El p-valor obtingut en el test és igual a 0.9999, de manera que no tenim prou evidència per rebutjar la hipòtesi nul·la, i, per tant, no hi ha sobredispersió. 
+
+\medskip
+
+Tant el test *trafo 1* com el test *trafo 2* no són significatius, de manera que **el model que s'ajustarà és el Poisson.**
+
+>
+
+## Mostres train i test
+
+Divideixo la mostra en dues parts, train i test. La primera servirà per entrenar el model i un cop entrenat s'aplicaran els dades test.
+```{r}
+lim <- round((2/3)*nrow(italy_2015), 0)
+data_train <- italy_2015[1:lim, ]
+data_test <- italy_2015[(lim + 1):nrow(italy_2015), ]
+```
+
+```{r}
+dim(data_test)
+```
+
+>
+
+## Model amb només train
+
+```{r}
+mpois_home_2 <- glm(hgoal ~ home + visitor + hpoints_prev5 + vpoints_prev5 + hgoal_prev5 + vgoal_prev5, data = data_train, family = poisson)
+summary(mpois_home)
+```
+
+>
+
+## Predicció amb nomes test
+```{r}
+predict_h <- predict(mpois_home_2, data_test, type = 'response')
+summary(predict_h)
+```
+
+>
+
+### El model realitza bones prediccions? 
+
+```{r}
+#gràfic normal
+plot(italy_2015$hgoal[(lim+1):length(italy_2015$hgoal)], predict_h, xlab = "Valors reals", ylab = "Valors predits", main = "Valors reals vs. Valors predits")
+abline(0, 1, lty = 2)
+
+# gràfic amb ggplot2
+library(ggplot2)
+ggplot(mapping = aes(x = italy_2015$hgoal[(lim+1):length(italy_2015$hgoal)], y = predict_h)) +
+  geom_point() + geom_abline() + labs(title = "Gràfic gols reals realitzats vs. gols predits per a l'equip local", subtitle = "Gols reals del partit vs. predicció dels gols feta amb un GLM (equip local)", x = 'Nombre real de gols', y='Nombre predit de gols') + theme(plot.title = element_text(size = 16, face = 'bold'))
+```
+
+No, el model no realitza bones prediccions.
+
+Una altra manera per veure si el model realitza bones prediccions és veure si MSE > Variància
+
+```{r}
+MSE_h <- sqrt(sum((data_test$hgoal - predict_h)^2)/length(predict_h))
+MSE_h
+```
+
+```{r}
+sd_h <- sd(italy_2015$hgoal)
+sd_h
+```
+Els valors són similars, de manera que el model no prediu bé...
+
+>
+
+### Hi ha algun coeficient del model que no sigui significatiu? 
+
+```{r}
+Anova(mpois_home_2)
+```
+
+Cap coeficient és significatiu...
+
+>
+
+### Avaluació del model amb el test de la deviància
+
+- $H_0$: El model és consistent amb les dades
+
+- $H_1$: El model no és consistent amb les dades
+```{r}
+# Deviància del model
+mpois_home_2$dev
+
+# Graus de llibertat del model
+mpois_home_2$df.residual
+
+# Test deviància
+1 - pchisq(mpois_home_2$dev, mpois_home_2$df.residual)
+```
+
+p-valor > 0.05 --> El model és adequat per a les nostres dades. Donem el model per bo.
+
+>
+
+# Model per a `vgoal` (amb train i test)
+
+## Comprovació del tipus de model (Poisson, Binomial Negatiu, Quasi-Poisson...)
+
+**Començo amb Poisson**
+
+```{r}
+mpois_visitor <- glm(vgoal ~ home + visitor, data = italy_2015, family = poisson)
+summary(mpois_visitor)
+```
+
+Un cop obtingut el model Poisson, és necessari estimar el paràmetre de dispersió $\phi$ per veure si aquest model té sobredispersió. L'estimació de $\phi$ s'obtindrà fent ús de l'estadístic de Pearson.
+
+```{r, echo = FALSE}
+# Estimació phi segons estadístic de Pearson
+X2DER <- sum(resid(mpois_visitor, type = "pearson")^2)
+(phi <- X2DER/mpois_home$df.residual)
+```
+
+$\hat{\phi}$ = `r phi` $< 1$. Per tant, el model Poisson no presenta sobredispersió. 
+
+Per poder corroborar l'anterior afirmació amb evidències estadístiques s'utilitza la funció `dispersiontest`, la qual realitza 2 contrasts d'hipòtesis diferents. 
+
+El primer test, anomenat *trafo 1*, contrasta si existeix una relació lineal o no entre $E[Y|X]$ i $Var[Y|X]$. Així doncs, les hipòtesis d'aquest test són les següents:
+
+- $H_0: Var[Y|X] = E[Y|X]$
+
+- $H_1: Var[Y|X] = E[Y|X] + \alpha \; E[Y|X]$
+
+Per tant, si $\alpha$ és significativament diferent de 0, existiran evidències estadístiques que permetran corroborar que la relació entre $E[Y|X]$ i $Var[Y|X]$ és lineal i, que per tant, el model presenta sobredispersió. En aquest cas, el més convenient serà ajustar un model Quassi-Poisson. 
+
+A continuació es realitza el test *trafo 1* fent ús de les nostres dades. 
+
+```{r, echo = FALSE}
+dispersiontest(mpois_visitor, trafo = 1) 
+```
+
+El p-valor obtingut en el test és igual a 0.9997, de manera que no tenim prou evidència per rebutjar la hipòtesi nul·la, i, per tant, no hi ha sobredispersió.
+
+\medskip
+
+El segon test, anomenat *trafo 2*, contrasta si existeix una relació quadràtica o no entre $E[Y|X]$ i $Var[Y|X]$. Així doncs, les hipòtesis d'aquest test són les següents:
+
+- $H_0: Var[Y|X] = E[Y|X]$
+
+- $H_1: Var[Y|X] = E[Y|X] + \alpha \; E[X|X]^2$
+
+Per tant, si $\alpha$ és significativament diferent de 0, existiran evidències estadístiques que permetran corroborar que la relació entre $E[Y|X]$ i $Var[Y|X]$ és quadràtica i, que per tant, el model presenta sobredispersió. En aquest cas, el més convenient serà ajustar un model Binomial Negativa. 
+
+A continuació es realitza el test *trafo 2* fent ús de les nostres dades.
+
+```{r, echo = FALSE}
+dispersiontest(mpois_visitor, trafo = 2)   
+```
+
+El p-valor obtingut en el test és igual a 0.9991, de manera que no tenim prou evidència per rebutjar la hipòtesi nul·la, i, per tant, no hi ha sobredispersió. 
+
+\medskip
+
+Tant el test *trafo 1* com el test *trafo 2* no són significatius, de manera que el model que s'ajustarà és el poisson.
+
+>
+
+## Mostres train i test
+
+Divideixo la mostra en dues parts, train i test. La primera servirà per entrenar el model i un cop entrenat s'aplicaran els dades test.
+
+```{r}
+lim <- round((2/3)*nrow(italy_2015), 0)
+data_train <- italy_2015[1:lim, ]
+data_test <- italy_2015[(lim + 1):nrow(italy_2015), ]
+```
+
+```{r}
+dim(data_test)
+```
+
+>
+
+## Model amb només train
+
+```{r}
+mpois_visitor_2 <- glm(vgoal ~ home + visitor + hpoints_prev5 + vpoints_prev5 + hgoal_prev5 + vgoal_prev5, data = data_train, family = poisson)
+summary(mpois_visitor_2)
+```
+
+>
+
+## Predicció amb nomes test
+```{r}
+predict_v <- predict(mpois_visitor_2, data_test, type = 'response')
+summary(predict_v)
+```
+
+>
+
+### El model realitza bones prediccions? 
+
+```{r fig.width=7.25}
+# gràfic normal
+plot(italy_2015$vgoal[(lim+1):length(italy_2015$vgoal)], predict_v, xlab = "Valors reals", ylab = "Valors predits", main = "Valors reals vs. Valors predits")
+abline(0, 1, lty = 2)
+
+# gràfic amb ggplot2
+library(ggplot2)
+ggplot(mapping = aes(x = italy_2015$vgoal[(lim+1):length(italy_2015$vgoal)], y = predict_v)) +
+  geom_point() + geom_abline() + labs(title = "Gràfic gols reals realitzats vs. gols predits per a l'equip visitant", subtitle = "Gols reals del partit vs. predicció dels gols feta amb un GLM (equip visitant)", x = 'Nombre real de gols', y = 'Nombre predit de gols') + theme(plot.title = element_text(size = 16, face = 'bold'))
+```
+
+No, el model no realitza bones prediccions.
+
+Una altra manera per veure si el model realitza bones prediccions és veure si MSE > Variància
+
+```{r}
+MSE_v <- sqrt(sum((data_test$vgoal - predict_v)^2)/length(predict_v))
+MSE_v
+```
+
+```{r}
+sd_v <- sd(italy_2015$vgoal)
+sd_v
+```
+
+Els valors són similars, de manera que el model no prediu bé...
+
+>
+
+### Hi ha algun coeficient del model que no sigui significatiu? 
+
+```{r}
+Anova(mpois_visitor_2)
+```
+
+Cap coeficient és significatiu...
+
+>
+
+### Avaluació del model amb el test de la deviància
+
+- $H_0$: El model és consistent amb les dades
+
+- $H_1$: El model no és consistent amb les dades
+```{r}
+# Deviància del model
+mpois_visitor_2$dev
+
+# Graus de llibertat del model
+mpois_visitor_2$df.residual
+
+# Test deviància
+1 - pchisq(mpois_visitor_2$dev, mpois_visitor_2$df.residual)
+```
+p-valor > 0.05 --> El model és adequat per a les nostres dades. Donem el model per bo.
+
+
+# Conclusió
+
+No va bé fer un glm!!! Les prediccions són dolentes per molt que afegim variables, fem train i test...
+
+\pagebreak
+
+# Bradley-Terry
+```{r}
+# install.packages("mosaic")
+library(mosaic)
+# install.packages("BradleyTerry2")
+library(BradleyTerry2)
+```
+
+### Passo `home` i `visitor` a `factor` per poder aplicar el model de Bradley-Terry
+```{r}
+# passo home i visitor a factor!
+italy_2015$home <- factor(italy_2015$home)
+italy_2015$visitor <- factor(italy_2015$visitor)
+```
+
+### Recodifico la variable `win` 
+
+Abans teniem: 
+
+- 1 si l'equip home guanya
+
+- 0 si els equips empaten 
+
+- -1 si l'equip visitor guanya
+
+Ara tindrem:
+
+- 0 si l'equip visitor guanya
+
+- 0.5 si els equips empaten
+
+- 1 si l'equip home guanya
+
+```{r}
+italy_2015$win2 <- vector(length = length(italy_2015$win))
+for (i in 1:length(italy_2015$win)){
+  if (italy_2015$win[i] == 1){
+    italy_2015$win[i] <- 1
+    italy_2015$win2[i] <- "Guanya l'equip local"
+  } else if (italy_2015$win[i] == 0){
+    italy_2015$win[i] <- 0.5
+    italy_2015$win2[i] <- "Empat"
+  } else {
+    italy_2015$win[i] <- 0
+    italy_2015$win2[i] <- "Guanya l'equip visitant"
+  }
+}
+```
+
+>
+
+
+
+
+
+
+### Mostra train i test
+```{r}
+lim <- round((2/3)*nrow(italy_2015), 0)
+data_train <- italy_2015[1:lim, ]
+data_test <- italy_2015[(lim + 1):nrow(italy_2015), ]
+```
+
+>
+
+## Aplicació del model de Bradley-Terry
+
+```{r}
+standardBT0 <- BTm(outcome = win, player1 = home, player2 = visitor, id = "team", data = data_test)
+summary(standardBT0)
+```
+
+## Model amb efecte casa/fora
+
+### Afegir variables per ajustar efecte casa-fora
+
+```{r}
+data_train$home <- data.frame(team = data_train$home, at.home = 1)
+data_train$visitor <- data.frame(team = data_train$visitor, at.home = 0)
+data_test$home <- data.frame(team = data_test$home, at.home = 1)
+data_test$visitor <- data.frame(team = data_test$visitor, at.home = 0)
+```
+
+```{r}
+standardBT <- update(standardBT0, formula = ~ team + at.home)
+```
+
+
+
+```{r}
+msummary(standardBT)
+```
+
+Next we look at the **abilities** for each team by exponetiating the player-level coefficients.
+
+```{r}
+abilities <- exp(BTabilities(standardBT))
+abilities <- data.frame(abilities)
+abilities$Team <- rownames(BTabilities(standardBT))
+abilities %>%
+arrange(ability)
+```
+
+
+$$\text{P(Juventus guanya ACF Fiorentina)} = \frac{\alpha_{Juventus}}{\alpha_{Juventus} + \alpha_{ACF Fiorentina}} = \frac{8.9453733}{8.9453733+0.9065549} = 0.907982$$
+
+## Avaluar capacitat predictiva
+
+Les probabilitats de que guanyi el de casa (*pr_win_home*) segons el model són més altes en aquells partits on realment ha guanyat el de casa (*data_test$win==1*) a la mostra test. A més, en els partits realment empatats també les probabilitats són més altes respecte als partits on ha perdut el de casa. El model prediu bastant bé.
+
+### Boxplot
+```{r}
+pr_win_home <- predict(standardBT, data_test, type='response')
+# boxplot normal
+boxplot(pr_win_home ~ win, data_test) 
+
+# boxplot amb ggplot2
+library(ggplot2)
+pl <- ggplot(data_test, aes(x = factor(win), y = pr_win_home))
+pl + geom_boxplot(aes(fill = factor(win))) + labs(title = "Boxplot valors reals vs. valors predits", subtitle = "Resultat real del partit vs. predicció feta amb el model de Bradley-Terry", x = 'Resultat real del partit', y='Predicció del resultat del partit') + scale_x_discrete(labels = c("0" = "Guanya l'equip visitor", "0.5" = "Empat", "1" = "Guanya l'equip home")) + theme(plot.title = element_text(size = 16, face = 'bold')) + guides(fill = guide_legend(title = "Resultat real"))
+```
+
+### Matriu de confusió
+
+Per fer la matriu de confusió es recategoritza la variable  `pr_win_home`, amb el següent criteri:
+
+- probabilitats entre [0.0-0.4] $\rightarrow$ guanya visitant
+
+- probabilitats entre [0.4-0.6] $\rightarrow$ empat
+
+- probabilitats entre [0.6-1.0] $\rightarrow$ guanya local
+
+```{r}
+pr_win_home2 <- vector(length = length(pr_win_home))
+for (i in 1:length(pr_win_home)){
+  if (pr_win_home[i] >= 0.0 && pr_win_home[i] <= 0.4){
+    pr_win_home2[i] <- "Guanya l'equip visitant"
+  } else if (pr_win_home[i] > 0.4 && pr_win_home[i] <= 0.6){
+    pr_win_home2[i] <- "Empat"
+  } else {
+    pr_win_home2[i] <- "Guanya l'equip local"
+  }
+}
+```
+
+```{r}
+#install.packages("caret")
+library(caret)
+data_test$win2 <- factor(data_test$win2)
+pr_win_home2 <- factor(pr_win_home2)
+confusionMatrix(pr_win_home2, data_test$win2)
+```
+
+
+
+
+
+
+## Comprovació ACF Fiorentina últimes jornades
+```{r}
+(ACF_Fiorentina_home <- data_test[which(data_test$home == "ACF Fiorentina"), names(data_test) %in% c("journey", "home", "visitor", "FT")])
+(ACF_Fiorentina_visitor <- data_test[which(data_test$visitor == "ACF Fiorentina"), names(data_test) %in% c("journey", "home", "visitor", "FT")])
+```
+
