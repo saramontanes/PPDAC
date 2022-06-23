@@ -1,0 +1,300 @@
+---
+title: "Untitled"
+author: "Sara Montañés González"
+date: "9/6/2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Article previ
+https://www.mdpi.com/2076-3417/9/3/500
+
+
+# Read and merge data
+
+```{r}
+# rm(list=ls())
+library(readxl)
+# setwd("C:/Users/jcortes/My Drive/Docencia/TFM TFG/TFG Sara Montanyes PPDAC/basket_nba")
+# setwd("E:/TFG/Case Study 2")
+load("TFG.RData")                                               # Former dataset (3962)
+d0 <- read_excel("NBA_raw_data2019_cause_competing_risk.xlsx")  # Excel with causes of death
+d <- merge(d0[, -which(names(d0) %in% c('survtime', 'ageend', 'cms2', 'etni', 'fins', 'pos'))],
+           nbaformupd[, c('id', 'survtime', 'ageend', 'cms2', 'etni', 'fins', 'pos')], by = 'id')
+summary(d)
+```
+
+# Taula 1 article Martí
+```{r}
+# install.packages("compareGroups")
+library(compareGroups)
+
+### Active vs Former
+res1 <- compareGroups(state ~ pos + etni + place + lefthanded + ageleft +
+                      ageright + cms2 + kilos + g, data = d0)
+restab1 <- createTable(res1, show.all = TRUE, show.p.overall = FALSE)
+restab1
+
+## Alive vs dead (among former NBA players)
+res2 <- compareGroups(cens ~ pos + etni + place + lefthanded  +
+                      ageend + cms2 + kilos + g, data = d)
+restab2 <- createTable(res2, show.all = TRUE, show.p.overall = FALSE)
+restab2
+```
+
+
+# Depurate data 
+
+```{r}
+d$event <- factor(ifelse(is.na(d$Cause_death), 0, as.numeric(as.factor(d$Cause_death))))
+freq <- table(d$event) 
+names(freq) <- c("Not dead", "Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other", "Unknown")
+freq
+```
+event = 0 --> not dead
+event = 1 --> Accident/Homicide/Suicide
+event = 2 --> Cancer
+event = 3 --> Cardiac disease
+event = 4 --> Natural/old age
+event = 5 --> Other
+event = 6 --> Unknown
+
+
+## Ethnicity
+
+Eliminem els "Duda" i "Mezcla", i només tenim "Black" i "White".
+```{r}
+d <- d[d$etni != "Duda",] 
+d <- d[d$etni != "Mezcla", ]
+d$etni <- as.factor(as.character(d$etni))
+```
+
+
+# Model for a specific case (1) - Accident/Homicide/Suicide
+```{r}
+library(survival)
+mod1 <- coxph(formula = Surv(survtime, event == "1") ~ etni + ageend + cms + fins, d)
+(sum1 <- summary(mod1))
+```
+com que l'esdeveniment és una causa de mort l'analisi de riscos competitius (Segons la filosofia de hazards específics) coincideix amb l'anàlisi de superviència tradicional.
+
+
+# Model for a specific case (2) - Cancer
+```{r}
+mod2 <- coxph(formula = Surv(survtime, event == "2") ~ etni + ageend + cms + fins, d)
+(sum2 <- summary(mod2))
+```
+
+# Model for a specific case (3) - Cardiac disease
+```{r}
+mod3 <- coxph(formula = Surv(survtime, event == "3") ~ etni + ageend + cms + fins, d)
+(sum3 <- summary(mod3))
+```
+
+# Model for a specific case (4) - Natural/old age
+```{r}
+mod4 <- coxph(formula = Surv(survtime, event == "4") ~ etni + ageend + cms + fins, d)
+(sum4 <- summary(mod4))
+```
+
+
+# Model for a specific case (5) - Other
+```{r}
+mod5 <- coxph(formula = Surv(survtime, event == "5") ~ etni + ageend + cms + fins, d)
+(sum5 <- summary(mod5))
+```
+
+# Gràfics Forest plot
+
+https://rpubs.com/nguyet/521181
+
+```{r}
+require(ggplot2)
+```
+
+```{r}
+mytheme <- function(base_size = 12, base_family = "sans"){
+  theme_minimal(base_size = base_size, base_family = base_family) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    panel.grid.major = element_line(color = "grey"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "aliceblue"),
+    strip.background = element_rect(fill = "darkgrey", color = "grey", size = 1),
+    strip.text = element_text(face = "bold", size = 12, color = "white"),
+    legend.position = " ",
+    legend.justification = "top", 
+    panel.border = element_rect(color = "grey", fill = NA, size = 0.5)
+  )
+}
+```
+
+```{r}
+esc <- 5 # Increments de les variables continues
+# Parameter = c("Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other", 
+#               "Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other", 
+#               "Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other", 
+#               "Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other")
+Parameter <- rep(c("Accident/Homicide/Suicide", "Cancer", 
+                   "Cardiac disease", "Natural/old age", "Other"), each = 4)
+
+# Variables = c(rep("etni", 5), rep("ageend", 5), rep("cms", 5), rep("fins", 5))
+Variables     <- rep(c("etni", "ageend", "cms", "fins"), 5)
+Variables_esc <- rep(c("White", paste0(c("Age end", "Height-cms", "Year end"),' (+',esc,')')), 5) # Per increments de 5 unitats
+
+# RR = c(0.6269, 0.9817, 1.0333, 0.9780, 
+#        0.7516, 1.1015, 1.0238, 0.9901, 
+#        0.6027, 1.1015, 1.0235, 0.9895, 
+#        1.197, 1.251, 1.039, 1.036, 
+#        0.7829, 1.1339, 0.9983, 1.0142)
+RR <- c(sum1$conf.int[,1], sum2$conf.int[,1], sum3$conf.int[,1], sum4$conf.int[,1], sum5$conf.int[,1])
+RR_esc <- c(sum1$conf.int[1,1], exp(esc*mod1$coefficients[2:4]),
+            sum2$conf.int[1,1], exp(esc*mod2$coefficients[2:4]),
+            sum3$conf.int[1,1], exp(esc*mod3$coefficients[2:4]),
+            sum4$conf.int[1,1], exp(esc*mod4$coefficients[2:4]),
+            sum5$conf.int[1,1], exp(esc*mod5$coefficients[2:4])) # Per increments de 5 unitats
+# Lower = c(0.3297, 0.9156, 0.9993, 0.9588,
+#           0.4901, 1.0565, 1.0027, 0.9731,
+#           0.3960, 1.0572, 1.0023, 0.9737, 
+#           0.3020, 1.1279, 0.9939, 0.9645, 
+#           0.4314, 1.0722, 0.9710, 0.9883)
+Lower <- c(sum1$conf.int[,3], sum2$conf.int[,3], sum3$conf.int[,3], sum4$conf.int[,3], sum5$conf.int[,3])
+Lower_esc <- c(sum1$conf.int[1,3], exp(esc*(sum1$coefficients[2:4,1] - 1.96*sum1$coefficients[2:4,3])),
+               sum2$conf.int[1,3], exp(esc*(sum2$coefficients[2:4,1] - 1.96*sum2$coefficients[2:4,3])),
+               sum3$conf.int[1,3], exp(esc*(sum3$coefficients[2:4,1] - 1.96*sum3$coefficients[2:4,3])),
+               sum4$conf.int[1,3], exp(esc*(sum4$coefficients[2:4,1] - 1.96*sum4$coefficients[2:4,3])),
+               sum5$conf.int[1,3], exp(esc*(sum5$coefficients[2:4,1] - 1.96*sum5$coefficients[2:4,3]))) # Per increments de 5 unitats
+
+# Upper = c(1.1921, 1.0526, 1.0684, 0.9976, 
+#           1.153, 1.149, 1.045, 1.008,
+#           0.9172, 1.1476, 1.0451, 1.0057,
+#           4.745, 1.387, 1.086, 1.112,
+#           1.421, 1.199, 1.026, 1.041)
+Upper <- c(sum1$conf.int[,4], sum2$conf.int[,4], sum3$conf.int[,4], sum4$conf.int[,4], sum5$conf.int[,4])
+Upper_esc <- c(sum1$conf.int[1,4],exp(esc*(sum1$coefficients[2:4,1] + 1.96*sum1$coefficients[2:4,3])),
+               sum2$conf.int[1,4],exp(esc*(sum2$coefficients[2:4,1] + 1.96*sum2$coefficients[2:4,3])),
+               sum3$conf.int[1,4],exp(esc*(sum3$coefficients[2:4,1] + 1.96*sum3$coefficients[2:4,3])),
+               sum4$conf.int[1,4],exp(esc*(sum4$coefficients[2:4,1] + 1.96*sum4$coefficients[2:4,3])),
+               sum5$conf.int[1,4],exp(esc*(sum5$coefficients[2:4,1] + 1.96*sum5$coefficients[2:4,3]))) # Per increments de 5 unitats
+
+# dat = data.frame(Parameter, Variables, RR, Lower, Upper)
+dat = data.frame(Parameter, Variables=Variables_esc, RR=RR_esc, Lower=Lower_esc, Upper=Upper_esc) # Per increments de 5 unitats
+dat$Parameter = factor(dat$Parameter, levels = c ("Accident/Homicide/Suicide", "Cancer", "Cardiac disease", "Natural/old age", "Other"))
+dat$Variables <- factor(dat$Variables)
+dat$Variables <- factor(dat$Variables,levels=levels(dat$Variables)[c(4,1,2,3)])
+```
+
+
+
+```{r}
+g = ggplot(data = dat, aes(x = Variables, y = RR, ymin = Lower, ymax = Upper, color = Parameter)) +
+ geom_pointrange(aes(col = Variables), lwd = 0.8) +
+ geom_hline(aes(fill = Variables), yintercept = 1, linetype = 2) +
+ xlab("") + ylab("Hazard Ratio (95% Confidence Interval)") +
+ geom_errorbar(aes(ymin = Lower, ymax = Upper, col = Variables), width = 0.5, cex = 1) +
+ facet_wrap(~Parameter, strip.position = "left", nrow = 9, scales = "free_y") +
+ theme(plot.title = element_text(size = 16, face = "bold"),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(face = "bold"),
+        axis.title = element_text(size = 12, face = "bold"),
+        strip.text.y = element_text(hjust = 0,vjust = 1, angle = 180, face = "bold")) +
+ coord_flip() + theme_bw() + theme(legend.position = "none") + scale_y_log10(n.breaks = 10)
+g
+```
+
+```{r}
+ggsave("ForestPlot.png", height = 9)
+```
+
+# Gràfics cumulative distribution function
+
+https://www.emilyzabor.com/tutorials/survival_analysis_in_r_tutorial.html#Part_3:_Competing_Risks
+
+```{r}
+library(cmprsk)
+#install.packages("survminer")
+library(survminer)
+
+d1 <- d[-which(d$Cause_death == "Unknown"), ]
+d1$Cause_death[is.na(d1$Cause_death)] <- 0 # <<- OJO
+
+ci_fit <- cuminc(ftime = d1$survtime, fstatus = d1$Cause_death, cencode = 0)
+ggcompetingrisks(ci_fit, xlab = "Years", conf.int = TRUE) + theme(legend.title = element_text(face = "bold"))
+ggsave("CumIncFun.png", height = 5)
+```
+
+
+```{r}
+d2 <- d1[-which(d1$Cause_death == 0), ]
+library(epiDisplay)
+tab1(d2$Cause_death, sort.group = "decreasing")
+```
+
+
+```{r}
+# By etnia
+ci_fit <- cuminc(ftime = d1$survtime, fstatus = d1$Cause_death, cencode = 0, group = d1$etni) 
+ggcompetingrisks(ci_fit, xlab = "Years", conf.int = FALSE, multiple_panels = TRUE) + theme(legend.title = element_text(face = "bold"))
+ggsave("CumIncFun_etnia.png", height = 5)
+```
+
+
+```{r}
+# By cms
+## Recategorització de la variable
+for (i in 1:nrow(d1)){
+  if (is.na(d1$cms[i])) {
+    next
+  } else if (d1$cms[i] < 180){
+    d1$cms_cat[i] <- "160-180"
+  } else if (d1$cms[i] >= 180 & d1$cms[i] < 190){
+    d1$cms_cat[i] <- "180-190"
+  } else if (d1$cms[i] >= 190 & d1$cms[i] < 200){
+    d1$cms_cat[i] <- "190-200"
+  } else if (d1$cms[i] >= 200 & d1$cms[i] < 210){
+    d1$cms_cat[i] <- "200-210"
+  } else {
+    d1$cms_cat[i] <- "210+"
+  } 
+}
+```
+
+
+```{r}
+ci_fit <- cuminc(ftime = d1$survtime, fstatus = d1$Cause_death, cencode = 0, group = d1$cms_cat)
+ggcompetingrisks(ci_fit, xlab = "Years", conf.int = FALSE, multiple_panels = TRUE) + theme(legend.title = element_text(face = "bold"))
+ggsave("CumIncFun_cms_cat.png", height = 5)
+```
+
+
+```{r}
+# By ageend
+## Recategorització de la variable
+for (i in 1:nrow(d1)){
+  if (is.na(d1$ageend[i])) {
+    next
+  } else if (d1$ageend[i] < 25){
+    d1$ageend_cat[i] <- "19-25"
+  } else if (d1$ageend[i] >= 25 & d1$ageend[i] < 30){
+    d1$ageend_cat[i] <- "25-30"
+  } else if (d1$ageend[i] >= 30 & d1$ageend[i] < 35){
+    d1$ageend_cat[i] <- "30-35"
+  } else if (d1$ageend[i] >= 35){
+    d1$ageend_cat[i] <- "35+"
+  } 
+}
+```
+
+
+```{r}
+ci_fit <- cuminc(ftime = d1$survtime, fstatus = d1$Cause_death, cencode = 0, group = d1$ageend_cat)
+ggcompetingrisks(ci_fit, xlab = "Years", conf.int = FALSE, multiple_panels = TRUE) + theme(legend.title = element_text(face = "bold"))
+ggsave("CumIncFun_ageend_cat.png", height = 5)
+```
+
+
+
+
