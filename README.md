@@ -1,7 +1,7 @@
 # PPDAC
 
-
 ## Català
+
 Aquest repositori conté el codi d'R per al meu Treball de Final de Grau en Estadística.
 
 #### Resum - PPDAC i taula de comprovació
@@ -12,9 +12,8 @@ La metodologia PPDAC (Problem – Plan – Data – Analysis – Conclusion) cre
 
 El present treball presenta un nou instrument dividit en les cinc parts del PPDAC amb 60 preguntes construïdes a partir d'articles científics d'educació estadística. Per comprovar les possibilitats d'aquest instrument s'exposen dos exemples amb dades reals del camp de l'esport que puguin servir de model a investigadors per conèixer quines preguntes poden ser d'utilitat en el disseny, anàlisi i comunicació dun estudi científic.
 
-
-
 ## Español
+
 Este repositorio contiene el código de R para mi Trabajo de Final de Grado en Estadística.
 
 #### Resumen - PPDAC y tabla de comprobación
@@ -30,6 +29,7 @@ En este trabajo se ha creado un instrumento dividido en cinco partes del PPDAC c
 This repository contains the R code for my Bachelor's thesis in Statistics.
 
 #### Summary - PPDAC and checklist table 
+
 Statistics in sports sciences has incited a great interest in recent years. In order to deal with questions related to this field, more and more professionals or data scientist are needed. These professional profiles often spend a lot of time analysing data without having statistical and computational thinking skills.
 
 The PPDAD (Problem – Plan – Data – Analysis – Conclusion) methodology, originated in 1999 in New Zealand, is a cyclical structure that helps to solve problems and make decisions on a quantitative level in any scientific field.
